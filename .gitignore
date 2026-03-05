@@ -28,3 +28,20 @@ Thumbs.db
 
 Figure_1.png
 results/
+
+
+.vscode/
+
+
+.ipynb_checkpoints/
+
+
+logs/
+tensorboard/
+
+
+.env
+
+
+*.ckpt
+saved_model/
