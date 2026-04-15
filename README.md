@@ -24,6 +24,8 @@ This project relies on the following open-source libraries:
 
 Please refer to the official documentation of each library for license details.
 
+For bundled license notices and license text used by dependencies, see `THIRD_PARTY_LICENSES.md`.
+
 ---
 
 ## 📄 License
