@@ -1,50 +1,88 @@
-# Microplastics Model Trainer
+# Microplastics Detection
 
-This project trains and runs a deep learning pipeline for microplastics detection in microscopy images.
+This repository contains a microplastics detection pipeline built around a residual U-Net-style segmentation model. It can train a model, run inference on microscopy images, and export visual detections as bounding boxes.
 
-The training script builds a residual U-Net-style segmentation model, learns from paired image and mask folders, and saves the best checkpoint as `my_custom_resunet.keras`. The inference script loads that model, predicts a segmentation mask, extracts contours, and draws bounding boxes around detected plastic regions.
+## Highlights
 
-## Project Files
+- Segmentation-based microplastics detection.
+- Training and inference scripts are included.
+- A bundled model artifact is provided for immediate testing.
+- Detection outputs both a rendered image and summary stats.
 
-- `train_model.py`: trains the segmentation model and saves training plots.
-- `det_p.py`: loads the trained model and runs box-based detection on a test image.
-- `myModel.keras`: bundled model artifact included in the repository.
+## Repository Layout
+
+- `train_model.py`: trains the segmentation model and writes the best checkpoint.
+- `det_p.py`: loads a trained model and runs detection on a single image.
+- `standardize_masks.py`: optional utility for normalizing mask values and polarity.
+- `myModel.keras`: bundled model artifact.
+- `my_custom_resunet.keras`: trained model checkpoint produced by training.
+- `detection_calibration.json`: saved threshold calibration used by inference.
 
 ## Requirements
 
-The scripts import and use these third-party libraries:
+Use Python 3.10+ and install the runtime dependencies:
 
-- TensorFlow / Keras
-- NumPy
-- Matplotlib
-- OpenCV (`cv2`)
+```bash
+pip install tensorflow numpy matplotlib opencv-python tifffile
+```
 
-## Configuration
+If you are using a virtual environment, create and activate it first.
 
-Before training, update the directory paths in `train_model.py`:
+## Quick Start
 
-- `IMAGES_DIR`: folder containing input microscopy images.
-- `MASKS_DIR`: folder containing the matching segmentation masks.
+1. Clone the repository.
+2. Install the dependencies.
+3. Run training or inference from the project root.
 
-Before running inference, update the test image path in `det_p.py`:
+## Training
 
-- `TEST_IMAGE_PATH`: path to the image you want to analyze.
+Train the model with:
 
-## Training Output
+```bash
+python train_model.py
+```
 
-Running `train_model.py` produces these artifacts:
+Training writes these outputs:
 
-- `my_custom_resunet.keras`: best model checkpoint saved during training.
-- `custom_resunet_training.png`: training and validation loss / Dice plots.
+- `my_custom_resunet.keras`
+- `custom_resunet_training.png`
+- `detection_calibration.json`
 
-## Inference Output
+If you want to standardize mask files before training, run:
 
-Running `det_p.py` produces:
+```bash
+python standardize_masks.py --masks-dir data/masks --output-dir data/masks_standardized
+```
 
-- `detected_boxes.png`: the input image with detected plastic regions marked by bounding boxes.
+## Inference
+
+Run detection on a single image with:
+
+```bash
+python det_p.py --image path/to/image.png
+```
+
+Optional flags:
+
+- `--model path/to/model.keras`: use a specific model file.
+- `--domain auto|clam|spiked`: choose the inference profile.
+- `--no-calibration`: ignore `detection_calibration.json`.
+- `--score-threshold 0.15`: override the base score threshold.
+- `--color-threshold 0.05`: override the base color threshold.
+- `--output detected_boxes.png`: set the output image path.
+
+Inference writes:
+
+- `detected_boxes.png`
+
+## Notes
+
+- The repository is set up for microplastics detection and visualization, not for a specific dataset walkthrough.
+- If you train your own data, make sure image and mask pairs follow the filename stem convention used by the scripts.
+- The detector will prefer the saved calibration file when available.
 
 ## License
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+This project is released under the MIT License. See `LICENSE` for the full text.
 
-Third-party dependency notices are collected in `THIRD_PARTY_LICENSES.md`.
+Third-party library credits and license notices are listed in `THIRD_PARTY_LICENSES.md`.
