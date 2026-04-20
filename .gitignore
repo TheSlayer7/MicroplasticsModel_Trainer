@@ -5,13 +5,13 @@ venv/
 ENV/
 
 
-
+data/
 
 images/
 images_png/
 masks/
 masks_png/
-
+*.png
 
 *.keras
 *.h5
