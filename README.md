@@ -1,33 +1,50 @@
-# MicroplasticsModel_Trainer
+# Microplastics Model Trainer
 
-This repository contains a deep learning pipeline designed to automate the identification and segmentation of microplastics in environmental samples (water, soil, or air). 
+This project trains and runs a deep learning pipeline for microplastics detection in microscopy images.
 
-Using a U-Net-based convolutional neural network architecture, the model transforms raw microscopic imagery into high-precision binary masks that highlight plastic contaminants.
+The training script builds a residual U-Net-style segmentation model, learns from paired image and mask folders, and saves the best checkpoint as `my_custom_resunet.keras`. The inference script loads that model, predicts a segmentation mask, extracts contours, and draws bounding boxes around detected plastic regions.
 
----
+## Project Files
 
-## 🛠 Dependencies
+- `train_model.py`: trains the segmentation model and saves training plots.
+- `det_p.py`: loads the trained model and runs box-based detection on a test image.
+- `myModel.keras`: bundled model artifact included in the repository.
 
-This project relies on the following open-source libraries:
+## Requirements
 
-- TensorFlow / Keras — Apache License 2.0  
-  https://www.tensorflow.org/  
-  https://github.com/tensorflow/tensorflow/blob/master/LICENSE  
+The scripts import and use these third-party libraries:
 
-- NumPy — BSD 3-Clause License  
-  https://numpy.org/  
-  https://github.com/numpy/numpy/blob/main/LICENSE.txt  
+- TensorFlow / Keras
+- NumPy
+- Matplotlib
+- OpenCV (`cv2`)
 
-- Matplotlib — Matplotlib License (BSD-style)  
-  https://matplotlib.org/  
-  https://github.com/matplotlib/matplotlib/blob/main/LICENSE/LICENSE  
+## Configuration
 
-Please refer to the official documentation of each library for license details.
+Before training, update the directory paths in `train_model.py`:
 
-For bundled license notices and license text used by dependencies, see `THIRD_PARTY_LICENSES.md`.
+- `IMAGES_DIR`: folder containing input microscopy images.
+- `MASKS_DIR`: folder containing the matching segmentation masks.
 
----
+Before running inference, update the test image path in `det_p.py`:
 
-## 📄 License
+- `TEST_IMAGE_PATH`: path to the image you want to analyze.
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+## Training Output
+
+Running `train_model.py` produces these artifacts:
+
+- `my_custom_resunet.keras`: best model checkpoint saved during training.
+- `custom_resunet_training.png`: training and validation loss / Dice plots.
+
+## Inference Output
+
+Running `det_p.py` produces:
+
+- `detected_boxes.png`: the input image with detected plastic regions marked by bounding boxes.
+
+## License
+
+This project is licensed under the MIT License. See `LICENSE` for details.
+
+Third-party dependency notices are collected in `THIRD_PARTY_LICENSES.md`.

@@ -19,6 +19,11 @@ This project uses third-party open-source libraries. Their license information i
 - Upstream: https://matplotlib.org/
 - Source license reference: https://github.com/matplotlib/matplotlib/blob/main/LICENSE/LICENSE
 
+4. OpenCV / cv2
+- License: Apache License 2.0
+- Upstream: https://opencv.org/
+- Source license reference: https://github.com/opencv/opencv/blob/4.x/LICENSE
+
 ## Apache License 2.0 (for TensorFlow / Keras)
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -318,3 +323,9 @@ https://github.com/matplotlib/matplotlib/blob/main/LICENSE/LICENSE
 
 If you distribute this project as a package or binary, keep this file and include
 all required third-party notices from upstream dependencies.
+
+## Apache License 2.0 (for OpenCV / cv2)
+
+OpenCV is distributed under the Apache License, Version 2.0. If you redistribute
+this project with OpenCV included, retain the Apache 2.0 notice above and include
+the corresponding upstream license text as required by your distribution method.
