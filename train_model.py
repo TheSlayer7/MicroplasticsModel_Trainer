@@ -322,6 +322,8 @@ class DomainPatchGenerator:
 
                 if self.training:
                     img, mask = _augment(img, mask)
+                    # Apply morphological dilation to enhance tiny objects during training
+                    mask = _dilate_mask(mask, kernel_size=3, iterations=1)
 
                 img = _enhance_warm_spots_tf(tf.convert_to_tensor(img, dtype=tf.float32)).numpy()
                 x[i] = np.clip(img, 0.0, 1.0)
@@ -537,8 +539,8 @@ def _visualize_predictions(img, mask_true, mask_pred, step, output_dir='debug_vi
 
 def calibrate_thresholds(model, val_pairs):
     # Calibrate for detection inference with clam validation only.
-    # Use a more conservative score search to favor precision on extremely sparse masks.
-    score_grid = np.linspace(0.20, 0.95, 30)
+    # Widened score_grid to test realistic thresholds (0.05 to 0.80 instead of 0.08 to 0.30)
+    score_grid = np.linspace(0.05, 0.80, 30)
     color_grid = np.linspace(0.01, 0.25, 16)
 
     def postprocess_binary_mask(mask_u8):
@@ -565,13 +567,13 @@ def calibrate_thresholds(model, val_pairs):
         pred = np.clip(np.nan_to_num(pred.astype(np.float32), nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
 
         pred_r = cv2.resize(pred, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
-        pred_b = cv2.GaussianBlur(pred_r.astype(np.float32), (0, 0), sigmaX=0.5)
-        color = cv2.GaussianBlur(_warm_spot_map(img).astype(np.float32), (0, 0), sigmaX=0.5)
-        combined = np.clip(0.97 * pred_b + 0.03 * color, 0.0, 1.0)
+        pred_b = cv2.GaussianBlur(pred_r.astype(np.float32), (0, 0), sigmaX=1.0)
+        color = cv2.GaussianBlur(_warm_spot_map(img).astype(np.float32), (0, 0), sigmaX=1.0)
+        combined = np.clip(0.92 * pred_b + 0.08 * color, 0.0, 1.0)
         cache.append((combined, color, msk))
 
     best_dice = -1.0
-    best_s = 0.42
+    best_s = 0.05  # Changed from 0.42 to 0.05 for lower threshold
     best_c = 0.05
 
     for s in score_grid:
@@ -589,8 +591,9 @@ def calibrate_thresholds(model, val_pairs):
                 best_s = float(s)
                 best_c = float(c)
 
+    # Lowered fallback threshold from 0.10 to 0.05 for sparse objects
     payload = {
-        'score_threshold': 0.42 if best_dice < 0.02 else best_s,
+        'score_threshold': 0.05 if best_dice < 0.02 else best_s,
         'color_threshold': 0.05 if best_dice < 0.02 else best_c,
         'objective': 'mean_validation_dice' if best_dice >= 0.02 else 'fallback_default_due_to_low_validation_dice',
         'objective_value': float(best_dice),
@@ -639,7 +642,7 @@ def main():
     print(f'Hard negative probability: {HARD_NEG_PATCH_PROB:.2f} (reduced false positives)')
     print(f'Loss weights: 0.40 BCE + 0.40 Tversky + 0.20 Dice (precision-focused)')
     print(f'Pos weight cap: 40.0 (favor precision/recall balance)')
-    print(f'Enhancements: Multi-scale augmentation, calibrated thresholding, no mask dilation')
+    print(f'Enhancements: Multi-scale augmentation, mask dilation, lower threshold')
     print('-'*70)
     print(f'Spiked train pairs: {len(spiked_train)}')
     print(f'Clam train pairs: {len(clam_train)}')
