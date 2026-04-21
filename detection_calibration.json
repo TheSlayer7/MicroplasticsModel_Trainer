@@ -1,10 +1,10 @@
 {
-  "score_threshold": 0.75,
+  "score_threshold": 0.22586206896551725,
   "color_threshold": 0.25,
   "objective": "mean_validation_dice",
-  "objective_value": 0.3558443391938291,
+  "objective_value": 0.11904284887130118,
   "samples": 4,
-  "model_input_height": 512,
-  "model_input_width": 512,
-  "generated_at_utc": "2026-04-20T19:08:18+00:00"
+  "model_input_height": 256,
+  "model_input_width": 256,
+  "generated_at_utc": "2026-04-21T13:56:30+00:00"
 }

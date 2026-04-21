@@ -147,16 +147,16 @@ def domain_profile(domain):
             'color_floor': 0.03,
             'min_area': 4.0,
             'max_area_ratio': 0.20,
-            'blend_model': 0.96,
-            'blend_color': 0.04,
+            'blend_model': 0.98,
+            'blend_color': 0.02,
         }
     return {
         'score_floor': 0.42,
         'color_floor': 0.05,
         'min_area': 6.0,
         'max_area_ratio': 0.16,
-        'blend_model': 0.92,
-        'blend_color': 0.08,
+        'blend_model': 0.97,
+        'blend_color': 0.03,
     }
 
 
@@ -331,8 +331,8 @@ def detect_and_draw(
     color = warm_spot_map(original).astype(np.float32)
     color = np.clip(np.nan_to_num(color, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
 
-    pred_blur = cv2.GaussianBlur(pred, (0, 0), sigmaX=1.0)
-    color_blur = cv2.GaussianBlur(color, (0, 0), sigmaX=1.0)
+    pred_blur = cv2.GaussianBlur(pred, (0, 0), sigmaX=0.5)
+    color_blur = cv2.GaussianBlur(color, (0, 0), sigmaX=0.5)
     combined = np.clip(profile['blend_model'] * pred_blur + profile['blend_color'] * color_blur, 0.0, 1.0)
 
     adaptive_score = max(score_threshold, float(np.quantile(pred_blur, 0.985)) * 0.62)
@@ -340,8 +340,7 @@ def detect_and_draw(
     high_thr = adaptive_score
     low_thr = max(score_threshold * 0.80, adaptive_score * 0.80)
 
-    binary = (pred_blur > 0.15).astype(np.uint8)
-    binary[pred_blur < 0.2] = 0
+    binary = (pred_blur > high_thr).astype(np.uint8)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), dtype=np.uint8))
 
     h, w = binary.shape

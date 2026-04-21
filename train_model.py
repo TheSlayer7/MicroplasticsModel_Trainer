@@ -8,6 +8,7 @@ import numpy as np
 import tensorflow as tf
 import tifffile
 from keras import callbacks, layers, models
+import matplotlib.pyplot as plt
 
 # Reduce OpenCV TIFF metadata warning noise.
 os.environ.setdefault('OPENCV_LOG_LEVEL', 'SILENT')
@@ -21,28 +22,32 @@ RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
 tf.random.set_seed(RANDOM_SEED)
 
-# Model/input settings.
-IMG_HEIGHT = 512
-IMG_WIDTH = 512
+# Model/input settings. Reduced to 256x256 for better focus on tiny objects.
+IMG_HEIGHT = 256
+IMG_WIDTH = 256
 BATCH_SIZE = 2
 EPOCHS = 10
 LEARNING_RATE = 1e-4
 
 # Patch sampler settings for tiny particles.
-PATCH_H = 384
-PATCH_W = 384
-POSITIVE_PATCH_PROB = 0.40
-HARD_NEG_PATCH_PROB = 0.15
-MIN_POS_PIXELS = 12
+# Reduced patch size to 256x256 for better micro-object detection.
+PATCH_H = 256
+PATCH_W = 256
+# Balanced positive patch probability to 0.35 for better precision/recall tradeoff.
+POSITIVE_PATCH_PROB = 0.35
+# Increased hard negative probability to 0.40 to reduce false positives.
+HARD_NEG_PATCH_PROB = 0.40
+MIN_POS_PIXELS = 3  # Reduced from 12 to catch tiny objects (1-5 pixels)
 HARD_NEG_ATTEMPTS = 32
-MAX_POS_RATIO_IN_PATCH = 0.05
+MAX_POS_RATIO_IN_PATCH = 0.08  # Increased from 0.05 to allow more positive pixels in patches
 
 # Staged domain curriculum.
 # Epoch ranges are [start, end).
+# Reduced pos_weight_cap to 40.0 to favor precision over recall.
 CURRICULUM = [
-    {'start': 0, 'end': 10, 'clam_prob': 0.40, 'pos_weight_cap': 150.0},
-    {'start': 10, 'end': 30, 'clam_prob': 0.40, 'pos_weight_cap': 150.0},
-    {'start': 30, 'end': 10_000, 'clam_prob': 0.40, 'pos_weight_cap': 150.0},
+    {'start': 0, 'end': 10, 'clam_prob': 0.40, 'pos_weight_cap': 40.0},
+    {'start': 10, 'end': 30, 'clam_prob': 0.40, 'pos_weight_cap': 40.0},
+    {'start': 30, 'end': 10_000, 'clam_prob': 0.40, 'pos_weight_cap': 40.0},
 ]
 
 # Data folders.
@@ -247,6 +252,25 @@ def _augment(img, mask):
     return img, mask
 
 
+def _multi_scale_augmentation(img, mask):
+    """Apply random scaling (0.5x to 2.0x) to handle objects at different scales."""
+    if np.random.random() > 0.5:
+        scale = np.random.uniform(0.5, 2.0)
+        h, w = img.shape[:2]
+        new_h, new_w = int(h * scale), int(w * scale)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        mask = cv2.resize(mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+    return img, mask
+
+
+def _dilate_mask(mask, kernel_size=3, iterations=1):
+    """Apply morphological dilation to enhance tiny foreground objects during training."""
+    if np.any(mask > 0):
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        mask = cv2.dilate(mask.astype(np.uint8), kernel, iterations=iterations)
+    return mask
+
+
 class DomainPatchGenerator:
     def __init__(
         self,
@@ -285,6 +309,9 @@ class DomainPatchGenerator:
                 mask = _read_mask(mask_path)
 
                 if self.training:
+                    # Apply multi-scale augmentation first (before patch sampling)
+                    img, mask = _multi_scale_augmentation(img, mask)
+                    
                     r = np.random.random()
                     if int(mask.sum()) > 0 and r < POSITIVE_PATCH_PROB:
                         img, mask = _sample_positive_patch(img, mask)
@@ -348,10 +375,15 @@ def iou_coef(y_true, y_pred, smooth=1e-6):
 
 
 def robust_hybrid_loss(y_true, y_pred):
-    pos_w = tf.minimum(POSITIVE_PIXEL_WEIGHT_VAR, tf.constant(150.0, dtype=tf.float32))
+    # Reduced pos_weight_cap to 40.0 for better precision/recall balance.
+    pos_w = tf.minimum(POSITIVE_PIXEL_WEIGHT_VAR, tf.constant(40.0, dtype=tf.float32))
+    # Balanced loss weights for precision: 0.40 BCE + 0.40 Tversky + 0.20 Dice
+    # BCE: 0.40 for balanced confidence learning
+    # Tversky: 0.40 with alpha=0.7, beta=0.3 to strongly penalize False Positives
+    # Dice: 0.20 for overlap metric
     return (
-        0.45 * weighted_bce_loss(y_true, y_pred, pos_weight=pos_w)
-        + 0.35 * (1.0 - tversky_coef(y_true, y_pred, alpha=0.4, beta=0.6))
+        0.40 * weighted_bce_loss(y_true, y_pred, pos_weight=pos_w)
+        + 0.40 * (1.0 - tversky_coef(y_true, y_pred, alpha=0.7, beta=0.3))
         + 0.20 * dice_loss(y_true, y_pred)
     )
 
@@ -464,9 +496,49 @@ class CurriculumScheduler(callbacks.Callback):
         )
 
 
+def _print_pred_stats(pred, label="Predictions"):
+    """Debug helper: print min/max/mean/median prediction values."""
+    pred_flat = pred.flatten()
+    pred_flat = pred_flat[np.isfinite(pred_flat)]
+    if pred_flat.size > 0:
+        print(f"{label} - Min: {pred_flat.min():.6f}, Max: {pred_flat.max():.6f}, "
+              f"Mean: {pred_flat.mean():.6f}, Median: {np.median(pred_flat):.6f}, "
+              f"Std: {pred_flat.std():.6f}")
+
+
+def _visualize_predictions(img, mask_true, mask_pred, step, output_dir='debug_vis'):
+    """Save visualization of input, ground truth, and prediction for debugging."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    
+    # Input image
+    if img.ndim == 3:
+        axes[0].imshow(np.clip(img, 0, 1))
+    else:
+        axes[0].imshow(np.clip(img, 0, 1), cmap='gray')
+    axes[0].set_title('Input Image')
+    axes[0].axis('off')
+    
+    # Ground truth mask
+    axes[1].imshow(mask_true, cmap='gray')
+    axes[1].set_title('Ground Truth Mask')
+    axes[1].axis('off')
+    
+    # Predicted mask
+    axes[2].imshow(mask_pred, cmap='gray')
+    axes[2].set_title('Predicted Mask')
+    axes[2].axis('off')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'prediction_step_{step}.png'), dpi=80, bbox_inches='tight')
+    plt.close()
+
+
 def calibrate_thresholds(model, val_pairs):
     # Calibrate for detection inference with clam validation only.
-    score_grid = np.linspace(0.08, 0.30, 23)
+    # Use a more conservative score search to favor precision on extremely sparse masks.
+    score_grid = np.linspace(0.20, 0.95, 30)
     color_grid = np.linspace(0.01, 0.25, 16)
 
     def postprocess_binary_mask(mask_u8):
@@ -493,9 +565,9 @@ def calibrate_thresholds(model, val_pairs):
         pred = np.clip(np.nan_to_num(pred.astype(np.float32), nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
 
         pred_r = cv2.resize(pred, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
-        pred_b = cv2.GaussianBlur(pred_r.astype(np.float32), (0, 0), sigmaX=1.0)
-        color = cv2.GaussianBlur(_warm_spot_map(img).astype(np.float32), (0, 0), sigmaX=1.0)
-        combined = np.clip(0.92 * pred_b + 0.08 * color, 0.0, 1.0)
+        pred_b = cv2.GaussianBlur(pred_r.astype(np.float32), (0, 0), sigmaX=0.5)
+        color = cv2.GaussianBlur(_warm_spot_map(img).astype(np.float32), (0, 0), sigmaX=0.5)
+        combined = np.clip(0.97 * pred_b + 0.03 * color, 0.0, 1.0)
         cache.append((combined, color, msk))
 
     best_dice = -1.0
@@ -518,7 +590,7 @@ def calibrate_thresholds(model, val_pairs):
                 best_c = float(c)
 
     payload = {
-        'score_threshold': 0.10 if best_dice < 0.02 else best_s,
+        'score_threshold': 0.42 if best_dice < 0.02 else best_s,
         'color_threshold': 0.05 if best_dice < 0.02 else best_c,
         'objective': 'mean_validation_dice' if best_dice >= 0.02 else 'fallback_default_due_to_low_validation_dice',
         'objective_value': float(best_dice),
@@ -556,9 +628,19 @@ def main():
     all_train_pairs = spiked_train + clam_train
     stats = compute_fg_stats(all_train_pairs)
     pos_weight = stats['suggested_pos_weight']
-    POSITIVE_PIXEL_WEIGHT_VAR.assign(min(float(pos_weight), 150.0))
+    POSITIVE_PIXEL_WEIGHT_VAR.assign(min(float(pos_weight), 300.0))
 
-    print('\nMP-Set training setup')
+    print('\n' + '='*70)
+    print('Training setup (OPTIMIZED FOR SPARSE TINY OBJECTS)')
+    print('='*70)
+    print(f'Input resolution: {IMG_HEIGHT}x{IMG_WIDTH} (256x256 for better precision)')
+    print(f'Patch size: {PATCH_H}x{PATCH_W} (256x256 crops)')
+    print(f'Positive patch probability: {POSITIVE_PATCH_PROB:.2f} (balanced)')
+    print(f'Hard negative probability: {HARD_NEG_PATCH_PROB:.2f} (reduced false positives)')
+    print(f'Loss weights: 0.40 BCE + 0.40 Tversky + 0.20 Dice (precision-focused)')
+    print(f'Pos weight cap: 40.0 (favor precision/recall balance)')
+    print(f'Enhancements: Multi-scale augmentation, calibrated thresholding, no mask dilation')
+    print('-'*70)
     print(f'Spiked train pairs: {len(spiked_train)}')
     print(f'Clam train pairs: {len(clam_train)}')
     print(f'Clam val pairs: {len(clam_val)}')
@@ -568,6 +650,7 @@ def main():
     print(f"Masks with foreground < 0.1%: {stats['tiny_lt_0_1pct']}/{stats['count']}")
     print(f'Initial positive weight: {pos_weight:.2f}')
     print(f'Train patch mix (positive/hard-negative/random): {POSITIVE_PATCH_PROB:.2f}/{HARD_NEG_PATCH_PROB:.2f}/{1.0 - POSITIVE_PATCH_PROB - HARD_NEG_PATCH_PROB:.2f}')
+    print('='*70 + '\n')
 
     if stats['inverted_masks'] > 0:
         raise ValueError(
@@ -611,9 +694,9 @@ def main():
         metrics=[
             dice_coef,
             iou_coef,
-            tf.keras.metrics.Precision(name='precision', thresholds=0.15),
-            tf.keras.metrics.Recall(name='recall', thresholds=0.15),
-            tf.keras.metrics.BinaryAccuracy(name='binary_accuracy', threshold=0.15),
+            tf.keras.metrics.Precision(name='precision', thresholds=0.5),
+            tf.keras.metrics.Recall(name='recall', thresholds=0.5),
+            tf.keras.metrics.BinaryAccuracy(name='binary_accuracy', threshold=0.5),
             tf.keras.metrics.AUC(name='auc', from_logits=False),
             tf.keras.metrics.AUC(name='pr_auc', curve='PR', from_logits=False, num_thresholds=200),
         ],
@@ -668,6 +751,26 @@ def main():
     for metric_name in ['loss', 'dice_coef', 'iou_coef', 'precision', 'recall', 'binary_accuracy', 'auc', 'pr_auc']:
         if metric_name in val_eval:
             print(f'  {metric_name}: {val_eval[metric_name]:.4f}')
+    
+    # Debug: sample predictions and print statistics
+    print('\nDebug: Sampling predictions from validation set...')
+    try:
+        for step, (x_batch, y_batch) in enumerate(val_ds):
+            if step >= 2:  # Only sample first 2 batches
+                break
+            y_pred_batch = model.predict(x_batch, verbose=0)
+            _print_pred_stats(y_pred_batch, label=f"Validation Batch {step}")
+            
+            # Visualize first sample in batch
+            if x_batch.shape[0] > 0:
+                _visualize_predictions(
+                    np.asarray(x_batch[0]),
+                    np.asarray(y_batch[0, ..., 0]),
+                    np.asarray(y_pred_batch[0, ..., 0]),
+                    step=step
+                )
+    except Exception as e:
+        print(f"Debug visualization failed (non-critical): {e}")
 
     # Save training curves.
     dice = history.history.get('dice_coef', [])
