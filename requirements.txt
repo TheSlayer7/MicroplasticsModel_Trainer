@@ -1,0 +1,6 @@
+numpy==2.4.2
+opencv-python==4.13.0.92
+tensorflow==2.20.0
+keras==3.13.2
+matplotlib==3.10.8
+tifffile==2026.4.11
